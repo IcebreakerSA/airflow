@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import "@testing-library/jest-dom";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
@@ -28,7 +28,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TimezoneContext } from "src/context/timezone";
 import { ChakraWrapper } from "src/utils/ChakraWrapper";
 
-import type { FilterPluginProps } from "../types";
+import type { DateRangeValue, FilterPluginProps } from "../types";
 import { DateRangeFilter } from "./DateRangeFilter";
 
 dayjs.extend(timezone);
@@ -93,10 +93,10 @@ const getInputs = () => {
   const timeInputs = screen.getAllByPlaceholderText("HH:mm");
 
   return {
-    endDateInput: dateInputs[1],
-    endTimeInput: timeInputs[1],
-    startDateInput: dateInputs[0],
-    startTimeInput: timeInputs[0],
+    endDateInput: dateInputs[1] as HTMLInputElement,
+    endTimeInput: timeInputs[1] as HTMLInputElement,
+    startDateInput: dateInputs[0] as HTMLInputElement,
+    startTimeInput: timeInputs[0] as HTMLInputElement,
   };
 };
 
@@ -148,6 +148,162 @@ describe("DateRangeFilter", () => {
     cleanup();
   });
 
+  it.each(["Enter", "Escape", "popover dismissal"])(
+    "keeps typed dates local until %s submits the range",
+    async (key) => {
+      const onChange = vi.fn();
+      const ControlledFilter = () => {
+        const [value, setValue] = useState<DateRangeValue>();
+
+        return (
+          <DateRangeFilter
+            {...defaultProps}
+            filter={{ ...mockFilter, value }}
+            onChange={(next) => {
+              onChange(next);
+              setValue(next as DateRangeValue);
+            }}
+          />
+        );
+      };
+
+      render(<ControlledFilter />, { wrapper: TestWrapper });
+      const { endDateInput, endTimeInput, startDateInput, startTimeInput } = getInputs();
+
+      for (const partial of ["2", "20", "2024", "2024/01", "2024/01/15"]) {
+        changeDateInput(startDateInput, partial);
+        expect(startDateInput).toHaveValue(partial);
+        expect(onChange).not.toHaveBeenCalled();
+      }
+      changeTimeInput(startTimeInput, "09:00");
+      changeDateInput(endDateInput, "2024/01/20");
+      changeTimeInput(endTimeInput, "17:00");
+      expect(onChange).not.toHaveBeenCalled();
+
+      if (key === "popover dismissal") {
+        fireEvent.click(screen.getByText("Date Range:"));
+      } else {
+        fireEvent.keyDown(endTimeInput, { key });
+      }
+      await waitFor(() => {
+        expect(onChange).toHaveBeenCalledExactlyOnceWith({
+          endDate: "2024-01-20T17:00:00.000Z",
+          startDate: "2024-01-15T09:00:00.000Z",
+        });
+        expect(screen.queryAllByPlaceholderText("YYYY/MM/DD")).toHaveLength(0);
+      });
+    },
+  );
+
+  it.each([
+    { end: "2024/01/20", error: "Invalid date format.", start: "2024/13/01", time: "09:00" },
+    { end: "2024/01/20", error: "Invalid time format.", start: "2024/01/15", time: "25:00" },
+    {
+      end: "2024/01/20",
+      error: "Start date/time must be before end date/time",
+      start: "2024/01/21",
+      time: "09:00",
+    },
+  ])(
+    "keeps invalid input open on Enter and dismissal ($start, $time, $end)",
+    async ({ end, error, start, time }) => {
+      const onChange = vi.fn();
+
+      renderFilter({ ...defaultProps, onChange });
+      const { endDateInput, startDateInput, startTimeInput } = getInputs();
+
+      changeDateInput(startDateInput, start);
+      changeTimeInput(startTimeInput, time);
+      changeDateInput(endDateInput, end);
+      fireEvent.keyDown(startDateInput, { key: "Enter" });
+      await waitForError(error);
+      fireEvent.click(screen.getByText("Date Range:"));
+      await waitForError(error);
+      expect(startDateInput).toBeVisible();
+      expect(onChange).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["start", "end"])("submits a date-only %s bound with the default time", async (field) => {
+    const onChange = vi.fn();
+
+    renderFilter({ ...defaultProps, onChange });
+    const { endDateInput, startDateInput } = getInputs();
+    const input = field === "start" ? startDateInput : endDateInput;
+
+    changeDateInput(input, "2024/01/15");
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledExactlyOnceWith({
+        endDate: field === "end" ? "2024-01-15T23:59:59.999Z" : undefined,
+        startDate: field === "start" ? "2024-01-15T00:00:00.000Z" : undefined,
+      });
+    });
+  });
+
+  it("does not resubmit an unchanged date after editing", async () => {
+    const onChange = vi.fn();
+
+    renderFilter({
+      ...defaultProps,
+      filter: { ...mockFilter, value: { startDate: "2024-01-15T00:00:00Z" } },
+      onChange,
+    });
+    fireEvent.click(screen.getByTestId("dateRange-pill"));
+    fireEvent.click(screen.getByText("Date Range:"));
+    await screen.findAllByPlaceholderText("YYYY/MM/DD");
+    const { startDateInput } = getInputs();
+
+    changeDateInput(startDateInput, "2024/01/1");
+    changeDateInput(startDateInput, "2024/01/15");
+    fireEvent.keyDown(startDateInput, { key: "Enter" });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("removes a date bound when its text is cleared", async () => {
+    const onChange = vi.fn();
+
+    renderFilter({
+      ...defaultProps,
+      filter: { ...mockFilter, value: { startDate: "2024-01-15T00:00:00Z" } },
+      onChange,
+    });
+    fireEvent.click(screen.getByTestId("dateRange-pill"));
+    fireEvent.click(screen.getByText("Date Range:"));
+    await screen.findAllByPlaceholderText("YYYY/MM/DD");
+    const { startDateInput } = getInputs();
+
+    changeDateInput(startDateInput, "");
+    fireEvent.keyDown(startDateInput, { key: "Enter" });
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledExactlyOnceWith({ endDate: undefined, startDate: undefined });
+    });
+  });
+
+  it("preserves an unedited bound when submitting a changed date", async () => {
+    const onChange = vi.fn();
+    const endDate = "2024-01-20T17:00:25Z";
+
+    renderFilter({
+      ...defaultProps,
+      filter: { ...mockFilter, value: { endDate, startDate: "2024-01-15T00:00:00Z" } },
+      onChange,
+    });
+    fireEvent.click(screen.getByTestId("dateRange-pill"));
+    fireEvent.click(screen.getByText("Date Range:"));
+    await screen.findAllByPlaceholderText("YYYY/MM/DD");
+    const { startDateInput, startTimeInput } = getInputs();
+
+    changeDateInput(startDateInput, "2024/01/16");
+    changeTimeInput(startTimeInput, "00:00");
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.keyDown(startDateInput, { key: "Enter" });
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledExactlyOnceWith({ endDate, startDate: "2024-01-16T00:00:00.000Z" });
+    });
+  });
+
   it("includes the whole end date when its time is empty", async () => {
     const onChange = vi.fn();
 
@@ -155,6 +311,7 @@ describe("DateRangeFilter", () => {
     const { endDateInput } = getInputs();
 
     changeDateInput(endDateInput, "2024/01/15");
+    fireEvent.keyDown(endDateInput, { key: "Enter" });
 
     await waitFor(() => {
       expect(onChange).toHaveBeenLastCalledWith({

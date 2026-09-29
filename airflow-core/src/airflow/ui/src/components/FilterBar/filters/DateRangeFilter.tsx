@@ -16,6 +16,8 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+import { useState } from "react";
+
 import { Box, HStack, VStack } from "@chakra-ui/react";
 import { useTranslation } from "react-i18next";
 import { MdCalendarToday, MdClose } from "react-icons/md";
@@ -38,8 +40,10 @@ export const DateRangeFilter = ({ filter, onChange, onRemove }: FilterPluginProp
       : { endDate: undefined, startDate: undefined };
 
   const hasValue = isValidFilterValue(filter.config.type, filter.value);
+  const [isOpen, setIsOpen] = useState(!hasValue);
 
   const {
+    applyDateRange,
     editingState,
     endDateValue,
     formatDisplayValue,
@@ -62,16 +66,19 @@ export const DateRangeFilter = ({ filter, onChange, onRemove }: FilterPluginProp
       onRemove={onRemove}
       renderInput={(_props, { onRequestClose }) => (
         <Popover.Root
-          defaultOpen={!hasValue}
           key={filter.id}
           lazyMount
           // The popover owns dismissal, so the pill never sees a blur. Deferring lets a range
           // picked in the same tick commit first, so the pill collapses instead of being dropped.
           onOpenChange={({ open }) => {
-            if (!open) {
+            if (open) {
+              setIsOpen(true);
+            } else if (applyDateRange()) {
+              setIsOpen(false);
               setTimeout(onRequestClose, 0);
             }
           }}
+          open={isOpen}
           positioning={{ placement: "bottom-start" }}
           unmountOnExit
         >
@@ -143,7 +150,23 @@ export const DateRangeFilter = ({ filter, onChange, onRemove }: FilterPluginProp
               </HStack>
             </Box>
           </Popover.Trigger>
-          <Popover.Content p={3} w="320px">
+          <Popover.Content
+            onKeyDown={(event) => {
+              if (
+                (event.key === "Enter" || event.key === "Escape") &&
+                event.target instanceof HTMLInputElement
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (applyDateRange()) {
+                  setIsOpen(false);
+                  setTimeout(onRequestClose, 0);
+                }
+              }
+            }}
+            p={3}
+            w="320px"
+          >
             <VStack gap={2} w="full">
               <DateRangeInputs
                 editingState={editingState}

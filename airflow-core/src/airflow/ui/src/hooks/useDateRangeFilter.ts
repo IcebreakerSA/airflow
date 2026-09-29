@@ -275,23 +275,6 @@ export const useDateRangeFilter = ({ onChange, translate, value }: UseDateRangeF
         const newInputs = { ...prev.inputs, [inputKey]: inputValue };
         const validationErrors = validateInputs(newInputs);
 
-        const dateStr = field === "start" ? newInputs.start : newInputs.end;
-        const timeStr = field === "start" ? newInputs.startTime : newInputs.endTime;
-
-        if (dayjs(dateStr, DATE_INPUT_FORMAT, true).isValid()) {
-          const combinedDateTime = combineDateAndTime(dateStr, timeStr, {
-            endOfDay: field === "end",
-            timezone: selectedTimezone,
-          });
-
-          if (Boolean(combinedDateTime)) {
-            onChange({
-              ...value,
-              [field === "start" ? "startDate" : "endDate"]: combinedDateTime,
-            });
-          }
-        }
-
         return {
           ...prev,
           inputs: newInputs,
@@ -299,6 +282,35 @@ export const useDateRangeFilter = ({ onChange, translate, value }: UseDateRangeF
         };
       });
     };
+
+  const applyDateRange = () => {
+    const { inputs } = editingState;
+
+    if (validateInputs(inputs).length > 0) {
+      return false;
+    }
+
+    const buildDateValue = (field: "end" | "start") => {
+      const dateStr = inputs[field];
+      const timeStr = inputs[`${field}Time`];
+      const previous = field === "start" ? startDateValue : endDateValue;
+
+      if (dateStr === previous?.format(DATE_INPUT_FORMAT) && timeStr === previous.format(TIME_INPUT_FORMAT)) {
+        return field === "start" ? value.startDate : value.endDate;
+      }
+
+      return dateStr
+        ? combineDateAndTime(dateStr, timeStr, { endOfDay: field === "end", timezone: selectedTimezone })
+        : undefined;
+    };
+    const nextValue = { endDate: buildDateValue("end"), startDate: buildDateValue("start") };
+
+    if (nextValue.startDate !== value.startDate || nextValue.endDate !== value.endDate) {
+      onChange(nextValue);
+    }
+
+    return true;
+  };
 
   const formatDateTime = (date: dayjs.Dayjs) => {
     const dateStr = date.tz(selectedTimezone).format("MMM DD, YYYY");
@@ -337,6 +349,7 @@ export const useDateRangeFilter = ({ onChange, translate, value }: UseDateRangeF
   const hasValidationErrors = editingState.validationErrors.length > 0;
 
   return {
+    applyDateRange,
     editingState,
     endDateValue,
     formatDisplayValue,
